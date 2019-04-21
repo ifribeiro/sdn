@@ -1,0 +1,208 @@
+# Copyright (C) 2016 Nippon Telegraph and Telephone Corporation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from ryu.base import app_manager
+from ryu.controller import ofp_event
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import set_ev_cls
+from ryu.ofproto import ofproto_v1_3
+from ryu.lib.packet import packet
+from ryu.lib.packet import ethernet
+from ryu.lib.packet import icmp
+from ryu.lib.packet import ipv4
+from ryu.lib.packet import arp
+
+
+
+
+class ExampleSwitch13(app_manager.RyuApp):
+
+	def __init__(self, *args, **kwargs):
+		super(ExampleSwitch13,self).__init__(*args,**kwargs)
+		#inicializa a tabela de enderecos mac
+		self.mac_to_port = {}
+		
+		#inicializa a tabela de roteamento
+		self.fw_table = {}
+		#inicializa a tabela arp
+		self.arp_table = {}
+		self.ip_router = ""
+
+	@set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+	def switch_features_handler(self, ev):
+		datapath = ev.msg.datapath
+		ofproto = datapath.ofproto
+		parser = datapath.ofproto_parser
+		# install the table-miss flow entry.
+		match = parser.OFPMatch()
+		actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
+		self.add_flow(datapath, 0, match, actions)
+
+	#Adiciona um flow na tabela de flows do Switch OpenFlow
+	def add_flow(self, datapath, priority, match, actions):
+		ofproto = datapath.ofproto
+		parser = datapath.ofproto_parser
+
+		# construct flow_mod message and send it.
+		inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+		mod = parser.OFPFlowMod(datapath=datapath, priority=priority, match=match, instructions=inst)
+		datapath.send_msg(mod) 
+
+	@set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+	def _packet_in_handler(self, ev):
+		msg = ev.msg
+		#body = ev.msg.body
+		port = msg.match['in_port']
+		datapath = msg.datapath
+		
+		#analisa o pacote recebido usando a biblioteca de pacotes
+		pkt = packet.Packet(msg.data)
+		eth_pkt = pkt.get_protocol(ethernet.ethernet)
+		pkt_icmp = pkt.get_protocol(icmp.icmp)
+		pkt_ipv4 = pkt.get_protocol(ipv4.ipv4)
+
+
+
+		if not eth_pkt:
+			return
+		if pkt_icmp:
+			self._handle_icmp(datapath, port, eth_pkt, pkt_ipv4, pkt_icmp, pkt)
+			return
+
+		if pkt_ipv4:
+			self.logger.info('ipv4')
+			
+			return
+
+		
+		pkt_arp = pkt.get_protocol(arp.arp)
+		if pkt_arp:
+			self._handle_arp(msg, datapath, port, eth_pkt, pkt_arp)
+			return
+
+	def _handle_arp(self, msg, datapath, in_port, eth_pkt, pkt_arp):
+		pkt_src_ip = pkt_arp.src_ip
+		pkt_dst_ip = pkt_arp.dst_ip
+		ofproto = datapath.ofproto
+		parser = datapath.ofproto_parser
+
+		#pega o ID do Datapath para identificar os switches do OpenFlow
+		dpid = datapath.id
+		self.mac_to_port.setdefault(dpid, {})
+		self.arp_table.setdefault(dpid, {})
+		dst = eth_pkt.dst
+		src = eth_pkt.src
+		
+		#se for o primeiro pacote
+		if in_port not in self.arp_table[dpid]:
+
+			self.arp_table[dpid][pkt_src_ip] = in_port
+			
+			
+		self.logger.info('Arp table: %s', self.arp_table)
+		if pkt_arp.opcode == arp.ARP_REPLY:
+			self.logger.info('ARP REPLY src: %s dst: %s', pkt_src_ip, pkt_dst_ip)
+
+			if pkt_dst_ip in self.arp_table[dpid]:
+				out_port = self.arp_table[dpid][pkt_dst_ip]		
+		
+
+		#aprende o endereco mac para evitar o FLOOD da proxima vez
+		self.mac_to_port[dpid][src] = in_port
+		
+		
+		#se o endereco de mac destino ja foi aprendido
+		#decide para qual porta de saida enviar o pacote, de outra forma realiza FLOOD
+		
+				
+		self.logger.info('pkt_dst_ip: %s', pkt_dst_ip)
+		if pkt_dst_ip in self.arp_table[dpid]:
+			out_port = self.arp_table[dpid][pkt_dst_ip]
+		else:
+			self.logger.info('Enviar todas as portas')
+			out_port = ofproto.OFPP_ALL
+
+		actions = [parser.OFPActionOutput (out_port)]
+
+		if out_port != ofproto.OFPP_ALL:
+			self.logger.info('Match in_port: %s - %s', in_port, pkt_dst_ip)
+			if pkt_arp.opcode == arp.ARP_REPLY:
+				match = parser.OFPMatch(in_port=out_port, eth_dst=dst)
+			else:
+				match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+			self.add_flow(datapath, 1, match, actions)
+			
+		out = parser.OFPPacketOut(datapath=datapath, 
+								buffer_id=ofproto.OFP_NO_BUFFER,
+								in_port=in_port, 
+								actions=actions,
+								data=msg.data)		
+		
+		datapath.send_msg(out) 
+		
+	def _handle_icmp(self, datapath, port, pkt_eth, pkt_ipv4, pkt_icmp, pkt_orig):
+		dst = pkt_eth.dst
+		dpid = datapath.id
+		ofproto = datapath.ofproto
+		parser = datapath.ofproto_parser
+		self.logger.info('pkt src: %s, dst: %s',pkt_ipv4.src, pkt_ipv4.dst)
+		if pkt_ipv4.dst in self.arp_table[dpid]:
+			self.logger.info('Ja esta na tabela')
+			porta_saida = self.arp_table[dpid][pkt_ipv4.dst]
+			
+		if pkt_icmp.type != icmp.ICMP_ECHO_REQUEST:
+			self.logger.info('ICMP echo reply')
+			return
+		
+		"""	
+		pkt = packet.Packet()
+		pkt.add_protocol(ethernet.ethernet(ethertype=pkt_eth.ethertype, dst=pkt_eth.dst, src=pkt_eth.src))
+		pkt.add_protocol(ipv4.ipv4(dst=pkt_ipv4.dst, src=pkt_ipv4.src, proto=pkt_ipv4.proto))
+		pkt.add_protocol(icmp.icmp(type_=icmp.ICMP_ECHO_REQUEST, code=icmp.ICMP_ECHO_REQUEST, csum=0, data=pkt_icmp.data))"""
+		actions = [parser.OFPActionOutput (porta_saida)]
+		match = parser.OFPMatch(in_port=porta_saida, eth_dst=dst)
+		self.add_flow(datapath, 1, match, actions)
+
+		data = pkt_orig.data
+		out = parser.OFPPacketOut(datapath=datapath, 
+									buffer_id=ofproto.OFP_NO_BUFFER,
+									in_port=porta_saida, 
+									actions=actions,
+									data=data)
+		
+		datapath.send_msg(out)
+		return
+
+		
+
+
+
+
+	def _send_packet(self, datapath, port, pkt):
+		ofproto = datapath.ofproto
+		parser = datapath.ofproto_parser
+		data = pkt.data
+		actions = [parser.OFPActionOutput (port)]
+		out = parser.OFPPacketOut(datapath=datapath, 
+									buffer_id=ofproto.OFP_NO_BUFFER,
+									in_port=port, 
+									actions=actions,
+									data=data)
+		
+		datapath.send_msg(out)
+
+
+		
+	
