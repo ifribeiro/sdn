@@ -30,16 +30,13 @@ def myNetwork():
 
     info( '*** Add hosts\n')
     h1 = net.addHost('h1', cls=Host, ip='172.16.20.10/24', defaultRoute='h1-eth0')
-    h4 = net.addHost('h4', cls=Host, ip='172.16.20.12/24', defaultRoute='h4-eth0')
     h2 = net.addHost('h2', cls=Host, ip='172.16.10.10/24', defaultRoute='h2-eth0')
     h3 = net.addHost('h3', cls=Host, ip='192.168.30.10/24', defaultRoute='h3-eth0')
 
     info( '*** Add links\n')
-    #net.addLink(s1, s2)
     net.addLink(s2, s3)
     net.addLink(s2, s1)
     net.addLink(h1, s1)
-    net.addLink(h4, s1)
     net.addLink(h3, s3)
     net.addLink(h2, s2)
 
@@ -50,15 +47,17 @@ def myNetwork():
         controller.start()
 
     info( '*** Starting switches\n')
+    net.get('s1').start([c0])
     net.get('s2').start([c0])
     net.get('s3').start([c0])
-    net.get('s1').start([c0])
+    
 
     info( '*** Post configure switches and hosts\n')
-    s2.cmd('ifconfig s2 172.16.10.1/24')
-    s3.cmd('ifconfig s3 192.168.30.10')
     s1.cmd('ifconfig s1 172.16.20.1/24')
-
+    s2.cmd('ifconfig s2 172.16.10.1/24')
+    s3.cmd('ifconfig s3 192.168.30.10/24')
+    
+    net.pingAll(1)
     CLI(net)
     net.stop()
 

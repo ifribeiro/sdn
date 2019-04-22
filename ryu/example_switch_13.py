@@ -40,17 +40,22 @@ class ExampleSwitch13(app_manager.RyuApp):
 		#inicializa a tabela arp
 		self.arp_table = {}
 		self.ip_router = ""
+		self.ports_hosts_s1 = []
+		self.ports_hosts_s2 = []
+		self.ports_hosts_s3 = []
+		self.ip_switches = {}
+		self.all_ports_s1 = []
+		self.all_ports_s2 = []
+		self.all_ports_s3 = []
 
 	@set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
 	def switch_features_handler(self, ev):
 		datapath = ev.msg.datapath
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
-		#self.logger.info(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-		
-				
+		msg = ev.msg
 		# install the table-miss flow entry.
-		self.logger.info("Ip %s",self.ip_router)
+		self.send_port_stats_request(datapath)
 		match = parser.OFPMatch()
 		actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
 		self.add_flow(datapath, 0, match, actions)
@@ -65,39 +70,60 @@ class ExampleSwitch13(app_manager.RyuApp):
 		datapath.send_msg(mod) 
 
 	@set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
-	def _packet_in_handler(self, ev):
-		
+	def _packet_in_handler(self, ev):		
 		msg = ev.msg
 		#body = ev.msg.body
 		port = msg.match['in_port']
-		datapath = msg.datapath
-
-		cmd = "ip -4 addr show s"+ `datapath.id` + "| grep -oP '(?<=inet\s)\d+(\.\d+){3}'"
-		resultado = os.popen(cmd).readlines()
-		self.ip_router = resultado[-1].rstrip()
+		in_port = msg.match['in_port']
+		datapath = msg.datapath		
+		dpid = datapath.id
+		self.ip_switches.setdefault(dpid, {})
+		try:
+			cmd = "ip -4 addr show s"+ `datapath.id` + "| grep -oP '(?<=inet\s)\d+(\.\d+){3}'"
+			resultado = os.popen(cmd).readlines()
+			ip_router = resultado[0].rstrip()
+			if ip_router not in self.ip_switches[dpid]:
+				self.ip_switches[dpid]['ip'] = ip_router
+		except:
+			return
 		
 		#analisa o pacote recebido usando a biblioteca de pacotes
 		pkt = packet.Packet(msg.data)
 		eth_pkt = pkt.get_protocol(ethernet.ethernet)
 		pkt_icmp = pkt.get_protocol(icmp.icmp)
 		pkt_ipv4 = pkt.get_protocol(ipv4.ipv4)
-		self.logger.info('dpid: %s, ip: %s', datapath.id, self.ip_router)
-
+		
+		#define o valor padrao para o dicionario
 		if not eth_pkt:
 			return
 		if pkt_icmp:
-			self._handle_icmp(datapath, port, eth_pkt, pkt_ipv4, pkt_icmp, pkt)
+
+			#self._handle_icmp(datapath, port, eth_pkt, pkt_ipv4, pkt_icmp, pkt)
 			return
 
 		if pkt_ipv4:
-			self.logger.info('ipv4')
+			#self.logger.info('ipv4')
 			return		
 		pkt_arp = pkt.get_protocol(arp.arp)
 		if pkt_arp:
+			
+			if(dpid==1):
+				if in_port not in self.ports_hosts_s1:
+					self.ports_hosts_s1.append(in_port)			
+			elif(dpid==2):
+				if in_port not in self.ports_hosts_s2:
+					self.ports_hosts_s2.append(in_port)
+			else:
+				if in_port not in self.ports_hosts_s3:
+					self.ports_hosts_s3.append(in_port)
+
 			self._handle_arp(msg, datapath, port, eth_pkt, pkt_arp)
 			return
-
+	"""
+	Processa os pacotes arp
+	"""
 	def _handle_arp(self, msg, datapath, in_port, eth_pkt, pkt_arp):
+		self.logger.info('Ping')
 		pkt_src_ip = pkt_arp.src_ip
 		pkt_dst_ip = pkt_arp.dst_ip
 		ofproto = datapath.ofproto
@@ -109,49 +135,65 @@ class ExampleSwitch13(app_manager.RyuApp):
 		self.arp_table.setdefault(dpid, {})
 		dst = eth_pkt.dst
 		src = eth_pkt.src
+		self.logger.info(self.ip_switches)
+		self.logger.info(pkt_dst_ip)
+		if pkt_dst_ip == self.ip_switches[dpid]['ip']:
+			self.logger.info('Reply arp request')
+			#CRIAR PACOTE ARP REPLY E ENVIAR
 		
-		#se for o primeiro pacote
-		if in_port not in self.arp_table[dpid]:
-			self.arp_table[dpid][pkt_src_ip] = in_port			
-			
-		self.logger.info('Arp table: %s', self.arp_table)
-		if pkt_arp.opcode == arp.ARP_REPLY:
-			self.logger.info('ARP REPLY src: %s dst: %s', pkt_src_ip, pkt_dst_ip)
-
-			if pkt_dst_ip in self.arp_table[dpid]:
-				out_port = self.arp_table[dpid][pkt_dst_ip]		
-		
-
-		#aprende o endereco mac para evitar o FLOOD da proxima vez
-		self.mac_to_port[dpid][src] = in_port
-				
-		#se o endereco de mac destino ja foi aprendido
-		#decide para qual porta de saida enviar o pacote, de outra forma realiza FLOOD
-					
-		self.logger.info('pkt_dst_ip: %s', pkt_dst_ip)
-		if pkt_dst_ip in self.arp_table[dpid]:
-			out_port = self.arp_table[dpid][pkt_dst_ip]
 		else:
-			self.logger.info('Enviar todas as portas')
-			out_port = ofproto.OFPP_ALL
+			self.logger.info('Encaminhar pacote')
+			#ENVIAR PACOTE PARA OUTRAS PORTAS HOSTS
+			  
 
-		actions = [parser.OFPActionOutput (out_port)]
 
-		if out_port != ofproto.OFPP_ALL:
-			self.logger.info('Match in_port: %s - %s', in_port, pkt_dst_ip)
+
+			"""
+			#se for o primeiro pacote
+			if in_port not in self.arp_table[dpid]:
+				self.arp_table[dpid][pkt_src_ip] = in_port			
+				
+			#self.logger.info('Arp table: %s', self.arp_table)
 			if pkt_arp.opcode == arp.ARP_REPLY:
-				match = parser.OFPMatch(in_port=out_port, eth_dst=dst)
-			else:
-				match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
-			self.add_flow(datapath, 1, match, actions)
+				#self.logger.info('ARP REPLY src: %s dst: %s', pkt_src_ip, pkt_dst_ip)
+
+				if pkt_dst_ip in self.arp_table[dpid]:
+					out_port = self.arp_table[dpid][pkt_dst_ip]		
 			
-		out = parser.OFPPacketOut(datapath=datapath, 
-								buffer_id=ofproto.OFP_NO_BUFFER,
-								in_port=in_port, 
-								actions=actions,
-								data=msg.data)		
+
+			#aprende o endereco mac para evitar o FLOOD da proxima vez
+			self.mac_to_port[dpid][src] = in_port
+					
+			#se o endereco de mac destino ja foi aprendido
+			#decide para qual porta de saida enviar o pacote, de outra forma realiza FLOOD
+						
+			#self.logger.info('pkt_dst_ip: %s', pkt_dst_ip)
+			if pkt_dst_ip in self.arp_table[dpid]:
+				out_port = self.arp_table[dpid][pkt_dst_ip]
+			else:
+				#self.logger.info('Enviar todas as portas')
+				out_port = ofproto.OFPP_ALL
+
+			actions = [parser.OFPActionOutput (out_port)]
+
+			if out_port != ofproto.OFPP_ALL:
+				#self.logger.info('Match in_port: %s - %s', in_port, pkt_dst_ip)
+				if pkt_arp.opcode == arp.ARP_REPLY:
+					match = parser.OFPMatch(in_port=out_port, eth_dst=dst)
+				else:
+					match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+				self.add_flow(datapath, 1, match, actions)
+				
+			out = parser.OFPPacketOut(datapath=datapath, 
+									buffer_id=ofproto.OFP_NO_BUFFER,
+									in_port=in_port, 
+									actions=actions,
+									data=msg.data)		
+			
+			datapath.send_msg(out)"""
+
+
 		
-		datapath.send_msg(out) 
 		
 	def _handle_icmp(self, datapath, port, pkt_eth, pkt_ipv4, pkt_icmp, pkt_orig):
 		dst = pkt_eth.dst
@@ -159,7 +201,7 @@ class ExampleSwitch13(app_manager.RyuApp):
 		dpid = datapath.id
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
-		self.logger.info('pkt src: %s, dst: %s',pkt_ipv4.src, pkt_ipv4.dst)
+		#self.logger.info('pkt src: %s, dst: %s',pkt_ipv4.src, pkt_ipv4.dst)
 		if pkt_ipv4.dst in self.arp_table[dpid]:			
 			porta_saida = self.arp_table[dpid][pkt_ipv4.dst]
 			
@@ -198,7 +240,31 @@ class ExampleSwitch13(app_manager.RyuApp):
 									data=data)
 		
 		datapath.send_msg(out)
+	
+	def send_port_stats_request(self, datapath):
+		ofp = datapath.ofproto
+		ofp_parser = datapath.ofproto_parser
+		req = ofp_parser.OFPPortStatsRequest(datapath, 0, ofp.OFPP_ANY)
+		datapath.send_msg(req)
 
-
+	@set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+	def port_stats_reply_handler(self, ev):
+		datapath = ev.msg.datapath
+		dpid = datapath.id
+		ports = []
+		for stat in ev.msg.body:
+			ports.append(stat.port_no)
+		ports = ports[1:]
+		for port in ports:
+			if(dpid==1):
+				self.all_ports_s1.append(port)		
+			elif(dpid==2):
+				self.all_ports_s2.append(port)
+			elif(dpid==3):
+				self.all_ports_s3.append(port)
+		self.logger.info('s1 %s',self.all_ports_s1)
+		self.logger.info('s2 %s',self.all_ports_s2)
+		self.logger.info('s3 %s',self.all_ports_s3)
+		
 		
 	
