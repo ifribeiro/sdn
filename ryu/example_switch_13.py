@@ -23,9 +23,10 @@ from ryu.lib.packet import ethernet
 from ryu.lib.packet import icmp
 from ryu.lib.packet import ipv4
 from ryu.lib.packet import arp
-
-
-
+from ryu.lib.packet import ether_types
+import os
+import string
+import subprocess
 
 class ExampleSwitch13(app_manager.RyuApp):
 
@@ -45,7 +46,11 @@ class ExampleSwitch13(app_manager.RyuApp):
 		datapath = ev.msg.datapath
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
+		#self.logger.info(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+		
+				
 		# install the table-miss flow entry.
+		self.logger.info("Ip %s",self.ip_router)
 		match = parser.OFPMatch()
 		actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
 		self.add_flow(datapath, 0, match, actions)
@@ -54,7 +59,6 @@ class ExampleSwitch13(app_manager.RyuApp):
 	def add_flow(self, datapath, priority, match, actions):
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
-
 		# construct flow_mod message and send it.
 		inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
 		mod = parser.OFPFlowMod(datapath=datapath, priority=priority, match=match, instructions=inst)
@@ -62,18 +66,22 @@ class ExampleSwitch13(app_manager.RyuApp):
 
 	@set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
 	def _packet_in_handler(self, ev):
+		
 		msg = ev.msg
 		#body = ev.msg.body
 		port = msg.match['in_port']
 		datapath = msg.datapath
+
+		cmd = "ip -4 addr show s"+ `datapath.id` + "| grep -oP '(?<=inet\s)\d+(\.\d+){3}'"
+		resultado = os.popen(cmd).readlines()
+		self.ip_router = resultado[-1].rstrip()
 		
 		#analisa o pacote recebido usando a biblioteca de pacotes
 		pkt = packet.Packet(msg.data)
 		eth_pkt = pkt.get_protocol(ethernet.ethernet)
 		pkt_icmp = pkt.get_protocol(icmp.icmp)
 		pkt_ipv4 = pkt.get_protocol(ipv4.ipv4)
-
-
+		self.logger.info('dpid: %s, ip: %s', datapath.id, self.ip_router)
 
 		if not eth_pkt:
 			return
@@ -83,10 +91,7 @@ class ExampleSwitch13(app_manager.RyuApp):
 
 		if pkt_ipv4:
 			self.logger.info('ipv4')
-			
-			return
-
-		
+			return		
 		pkt_arp = pkt.get_protocol(arp.arp)
 		if pkt_arp:
 			self._handle_arp(msg, datapath, port, eth_pkt, pkt_arp)
@@ -107,9 +112,7 @@ class ExampleSwitch13(app_manager.RyuApp):
 		
 		#se for o primeiro pacote
 		if in_port not in self.arp_table[dpid]:
-
-			self.arp_table[dpid][pkt_src_ip] = in_port
-			
+			self.arp_table[dpid][pkt_src_ip] = in_port			
 			
 		self.logger.info('Arp table: %s', self.arp_table)
 		if pkt_arp.opcode == arp.ARP_REPLY:
@@ -121,12 +124,10 @@ class ExampleSwitch13(app_manager.RyuApp):
 
 		#aprende o endereco mac para evitar o FLOOD da proxima vez
 		self.mac_to_port[dpid][src] = in_port
-		
-		
+				
 		#se o endereco de mac destino ja foi aprendido
 		#decide para qual porta de saida enviar o pacote, de outra forma realiza FLOOD
-		
-				
+					
 		self.logger.info('pkt_dst_ip: %s', pkt_dst_ip)
 		if pkt_dst_ip in self.arp_table[dpid]:
 			out_port = self.arp_table[dpid][pkt_dst_ip]
@@ -154,23 +155,23 @@ class ExampleSwitch13(app_manager.RyuApp):
 		
 	def _handle_icmp(self, datapath, port, pkt_eth, pkt_ipv4, pkt_icmp, pkt_orig):
 		dst = pkt_eth.dst
+		src = pkt_eth.dst
 		dpid = datapath.id
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
 		self.logger.info('pkt src: %s, dst: %s',pkt_ipv4.src, pkt_ipv4.dst)
-		if pkt_ipv4.dst in self.arp_table[dpid]:
-			self.logger.info('Ja esta na tabela')
+		if pkt_ipv4.dst in self.arp_table[dpid]:			
 			porta_saida = self.arp_table[dpid][pkt_ipv4.dst]
 			
 		if pkt_icmp.type != icmp.ICMP_ECHO_REQUEST:
 			self.logger.info('ICMP echo reply')
 			return
 		
-		"""	
+		"""
 		pkt = packet.Packet()
 		pkt.add_protocol(ethernet.ethernet(ethertype=pkt_eth.ethertype, dst=pkt_eth.dst, src=pkt_eth.src))
-		pkt.add_protocol(ipv4.ipv4(dst=pkt_ipv4.dst, src=pkt_ipv4.src, proto=pkt_ipv4.proto))
-		pkt.add_protocol(icmp.icmp(type_=icmp.ICMP_ECHO_REQUEST, code=icmp.ICMP_ECHO_REQUEST, csum=0, data=pkt_icmp.data))"""
+		pkt.add_protocol(ipv4.ipv4(dst=pkt_ipv4.dst, src=pkt_ipv4.dst, proto=pkt_ipv4.proto))
+		pkt.add_protocol(icmp.icmp(type_=icmp.ICMP_ECHO_REPLY, code=icmp.ICMP_ECHO_REPLY_CODE, csum=0, data=pkt_icmp.data))"""
 		actions = [parser.OFPActionOutput (porta_saida)]
 		match = parser.OFPMatch(in_port=porta_saida, eth_dst=dst)
 		self.add_flow(datapath, 1, match, actions)
@@ -184,11 +185,6 @@ class ExampleSwitch13(app_manager.RyuApp):
 		
 		datapath.send_msg(out)
 		return
-
-		
-
-
-
 
 	def _send_packet(self, datapath, port, pkt):
 		ofproto = datapath.ofproto
