@@ -129,7 +129,6 @@ class ExampleSwitch13(app_manager.RyuApp):
 	Processa os pacotes arp
 	"""
 	def _handle_arp(self, msg, datapath, in_port, eth_pkt, pkt_arp):
-		self.logger.info('Ping')
 		pkt_src_ip = pkt_arp.src_ip
 		pkt_dst_ip = pkt_arp.dst_ip
 		ofproto = datapath.ofproto
@@ -141,8 +140,6 @@ class ExampleSwitch13(app_manager.RyuApp):
 		self.arp_table.setdefault(dpid, {})
 		dst = eth_pkt.dst
 		src = eth_pkt.src
-		self.logger.info(self.ip_switches)
-		self.logger.info(pkt_dst_ip)
 		if pkt_dst_ip == self.ip_switches[dpid]['ip']:
 			self.arp_table[dpid][pkt_arp.src_ip] = in_port
 			#CRIAR PACOTE ARP REPLY E ENVIAR PARA A PORTA DE ENTRADA
@@ -154,9 +151,9 @@ class ExampleSwitch13(app_manager.RyuApp):
 			#self.logger.info(pkt)
 
 			out_port = in_port
-			actions = [parser.OFPActionOutput (port=out_port)]
-			match = parser.OFPMatch(in_port=in_port, eth_dst=eth_pkt.src)
-			self.add_flow(datapath, 1, match, actions)
+			#actions = [parser.OFPActionOutput (port=out_port)]
+			#match = parser.OFPMatch(in_port=in_port, eth_dst=eth_pkt.src)
+			#self.add_flow(datapath, 1, match, actions)
 			self._send_packet(datapath, in_port, pkt)
 	
 		else:
@@ -167,18 +164,16 @@ class ExampleSwitch13(app_manager.RyuApp):
 			else:
 
 				#retorna um arp_reply
-				self.logger.info('Retornar arp reply')
+				self.logger.info('Arp reply dst: %s, src %s, port: %s', eth_pkt.src, self.hw_addr, in_port)
 				pkt = packet.Packet()
 				pkt.add_protocol(ethernet.ethernet(ethertype=eth_pkt.ethertype, dst=eth_pkt.src, src=self.hw_addr))
 			
 				pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, src_mac=self.hw_addr, src_ip=self.ip_switches[dpid]['ip'], dst_mac=pkt_arp.src_mac, dst_ip=pkt_arp.src_ip))
 				#self.logger.info(pkt)
-
-				out_port = in_port
-				actions = [parser.OFPActionOutput (port=out_port)]
-				match = parser.OFPMatch(in_port=in_port, eth_dst=eth_pkt.src)
-				self.add_flow(datapath, 1, match, actions)
-				self._send_packet(datapath, in_port, pkt)
+				
+				
+				
+				self._send_packet_v2(datapath, in_port, pkt, eth_pkt)
 
 				#encaminha o pacote icmp_request para outro switch
 
@@ -301,16 +296,17 @@ class ExampleSwitch13(app_manager.RyuApp):
 		
 		datapath.send_msg(out)
 
-	def _send_packet_v2(self, datapath, port, pkt):
+	def _send_packet_v2(self, datapath, port, pkt, eth_pkt):
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser		
-		#self.logger.info("packet %s "%(pkt,))
 		pkt.serialize()
 		data = pkt.data
 		actions = [parser.OFPActionOutput (port=port)]
+		match = parser.OFPMatch(eth_dst=eth_pkt.src)
+		self.add_flow(datapath, 1, match, actions)
 		out = parser.OFPPacketOut(datapath=datapath, 
 									buffer_id=ofproto.OFP_NO_BUFFER,
-									in_port=port, 
+									in_port=ofproto.OFPP_CONTROLLER, 
 									actions=actions,
 									data=data)
 		
