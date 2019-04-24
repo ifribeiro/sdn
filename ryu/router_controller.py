@@ -140,7 +140,7 @@ class RouterController(app_manager.RyuApp):
 		self.arp_table.setdefault(dpid, {})
 		dst = eth_pkt.dst
 		src = eth_pkt.src
-		if pkt_dst_ip == self.ip_switches[dpid]['ip']:
+		if pkt_dst_ip == self.ip_switches[dpid]['ip']:			
 			self.arp_table[dpid][pkt_arp.src_ip] = in_port
 			pkt = packet.Packet()
 			pkt.add_protocol(ethernet.ethernet(ethertype=eth_pkt.ethertype, dst=eth_pkt.src, src=self.mac_switches[dpid]['mac'] ))			
@@ -161,7 +161,7 @@ class RouterController(app_manager.RyuApp):
 				pkt = packet.Packet()
 				pkt.add_protocol(ethernet.ethernet(ethertype=eth_pkt.ethertype, dst=eth_pkt.src, src=self.mac_switches[dpid]['mac']))
 			
-				pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, src_mac=self.hw_addr, src_ip=self.ip_switches[dpid]['ip'], dst_mac=pkt_arp.src_mac, dst_ip=pkt_arp.src_ip))
+				pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, src_mac=self.mac_switches[dpid]['mac'], src_ip=pkt_arp.dst_ip, dst_mac=pkt_arp.src_mac, dst_ip=pkt_arp.src_ip))
 			
 				self._send_packet_v2(datapath, in_port, pkt, eth_pkt)
 
@@ -226,8 +226,8 @@ class RouterController(app_manager.RyuApp):
 			pkt.add_protocol(icmp.icmp(type_=icmp.ICMP_ECHO_REPLY,code=icmp.ICMP_ECHO_REPLY_CODE,csum=0,data=pkt_icmp.data))	
 			match = parser.OFPMatch(in_port=port, eth_type=ether_types.ETH_TYPE_IP, ipv4_dst = pkt_ipv4.dst)
 			self.add_flow(datapath, 2, match, actions)	
-		self._send_packet(datapath,port,pkt)
-			
+			self._send_packet(datapath,port,pkt)
+		
 		"""
 		if pkt_ipv4.dst in self.arp_table[dpid]:			
 			porta_saida = self.arp_table[dpid][pkt_ipv4.dst]
