@@ -28,21 +28,19 @@ import os
 import string
 import subprocess
 
-class ExampleSwitch13(app_manager.RyuApp):
+class RouterController(app_manager.RyuApp):
 
 	def __init__(self, *args, **kwargs):
-		super(ExampleSwitch13,self).__init__(*args,**kwargs)
+		super(RouterController,self).__init__(*args,**kwargs)
 		#inicializa a tabela de enderecos mac
 		self.mac_to_port = {}
 		
 		#inicializa a tabela de roteamento
 		self.fw_table = {}
-		#inicializa a tabela arp
-		self.hw_addr = '0a:e4:1c:d1:3e:44'
-		self.dst_mac = 'da:f7:a6:8e:95:d4'
+		#inicializa a tabela arp		
 		self.netmask = '255.255.255.0'
 		self.arp_table = {}
-		self.ip_router = ""
+		self.mac_switches = {}
 		self.ports_hosts_s1 = []
 		self.ports_hosts_s2 = []
 		self.ports_hosts_s3 = []
@@ -81,12 +79,18 @@ class ExampleSwitch13(app_manager.RyuApp):
 		datapath = msg.datapath		
 		dpid = datapath.id
 		self.ip_switches.setdefault(dpid, {})
+		self.mac_switches.setdefault(dpid,{})
 		try:
-			cmd = "ip -4 addr show s"+ str(datapath.id) + "| grep -oP '(?<=inet\s)\d+(\.\d+){3}'"
-			resultado = os.popen(cmd).readlines()
-			ip_router = resultado[0].rstrip()
+			cmd_ip = "ip -4 addr show s"+ str(datapath.id) + "| grep -oP '(?<=inet\s)\d+(\.\d+){3}'"
+			cmd_mac = "ip -4 link show s"+ str(datapath.id) + "| awk '/ether/ {print $2}'" 
+			res_ip = os.popen(cmd_ip).readlines()
+			res_mac = os.popen(cmd_mac).readlines()
+			ip_router = res_ip[0].rstrip()
+			mac_router = res_mac[0].rstrip()
 			if ip_router not in self.ip_switches[dpid]:
 				self.ip_switches[dpid]['ip'] = ip_router
+			if mac_router not in self.mac_switches:
+				self.mac_switches[dpid]['mac'] = mac_router
 		except:
 			return
 		
@@ -98,31 +102,25 @@ class ExampleSwitch13(app_manager.RyuApp):
 		
 		#define o valor padrao para o dicionario
 		if not eth_pkt:
-			self.logger.info('Not eth')
 			return
 		if pkt_icmp:
-			self.logger.info("ICMP packet in %s src: %s, dst: %s, port: %s", datapath.id, pkt_ipv4.src, pkt_ipv4.dst, in_port)
-
 			self._handle_icmp(datapath, port, eth_pkt, pkt_ipv4, pkt_icmp, pkt)
 			return
 
 		if pkt_ipv4:
-			self.logger.info('ipv4')
+
 			return		
 		pkt_arp = pkt.get_protocol(arp.arp)
 		if pkt_arp:
-			self.logger.info("ARP packet in %s src: %s, dst: %s, port: %s", datapath.id, eth_pkt.src, eth_pkt.dst, in_port)			
 			if(dpid==1):
 				if in_port not in self.ports_hosts_s1:
 					self.ports_hosts_s1.append(in_port)
-					#self.logger.info(self.ports_hosts_s1)
 			elif(dpid==2):
 				if in_port not in self.ports_hosts_s2:
 					self.ports_hosts_s2.append(in_port)
 			else:
 				if in_port not in self.ports_hosts_s3:
 					self.ports_hosts_s3.append(in_port)
-
 			self._handle_arp(msg, datapath, port, eth_pkt, pkt_arp)
 			return
 	"""
@@ -142,45 +140,33 @@ class ExampleSwitch13(app_manager.RyuApp):
 		src = eth_pkt.src
 		if pkt_dst_ip == self.ip_switches[dpid]['ip']:
 			self.arp_table[dpid][pkt_arp.src_ip] = in_port
-			#CRIAR PACOTE ARP REPLY E ENVIAR PARA A PORTA DE ENTRADA
 
 			pkt = packet.Packet()
-			pkt.add_protocol(ethernet.ethernet(ethertype=eth_pkt.ethertype, dst=eth_pkt.src, src=self.hw_addr))
+			pkt.add_protocol(ethernet.ethernet(ethertype=eth_pkt.ethertype, dst=eth_pkt.src, src=self.mac_switches[dpid]['mac'] ))
 			
-			pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, src_mac=self.hw_addr, src_ip=self.ip_switches[dpid]['ip'], dst_mac=pkt_arp.src_mac, dst_ip=pkt_arp.src_ip))
-			#self.logger.info(pkt)
+			pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, src_mac=self.mac_switches[dpid]['mac']  , src_ip=self.ip_switches[dpid]['ip'], dst_mac=pkt_arp.src_mac, dst_ip=pkt_arp.src_ip))
 
 			out_port = in_port
-			#actions = [parser.OFPActionOutput (port=out_port)]
-			#match = parser.OFPMatch(in_port=in_port, eth_dst=eth_pkt.src)
-			#self.add_flow(datapath, 1, match, actions)
+			actions = [parser.OFPActionOutput (port=out_port)]
+			match = parser.OFPMatch(in_port=in_port, eth_dst=eth_pkt.src)
+			self.add_flow(datapath, 1, match, actions)
 			self._send_packet(datapath, in_port, pkt)
 	
 		else:
 			#self.logger.info('Encaminhar pacote %s',pkt_arp)
-			if self.same_subnet(pkt_src_ip,pkt_dst_ip,self.netmask):
+			if self.same_subnet(pkt_src_ip, self.ip_switches[dpid]['ip'] ,self.netmask):
 				#FAZER BROADCAST SOMENTE NOS HOSTS
-				self.logger.info('Fazer broadcast')
+				
 			else:
-
-				#retorna um arp_reply
-				self.logger.info('Arp reply dst: %s, src %s, port: %s', eth_pkt.src, self.hw_addr, in_port)
+				#retorna um arp_reply				
 				pkt = packet.Packet()
-				pkt.add_protocol(ethernet.ethernet(ethertype=eth_pkt.ethertype, dst=eth_pkt.src, src=self.hw_addr))
+				pkt.add_protocol(ethernet.ethernet(ethertype=eth_pkt.ethertype, dst=eth_pkt.src, src=self.mac_switches[dpid]['mac'] ))
 			
-				pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, src_mac=self.hw_addr, src_ip=self.ip_switches[dpid]['ip'], dst_mac=pkt_arp.src_mac, dst_ip=pkt_arp.src_ip))
-				#self.logger.info(pkt)
-				
-				
-				
+				pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, src_mac=self.mac_switches[dpid]['mac'] , src_ip=self.ip_switches[dpid]['ip'], dst_mac=pkt_arp.src_mac, dst_ip=pkt_arp.src_ip))
+			
 				self._send_packet_v2(datapath, in_port, pkt, eth_pkt)
 
 				#encaminha o pacote icmp_request para outro switch
-
-
-
-			
-			#ENVIAR PACOTE PARA OUTRAS PORTAS HOSTS
 
 		"""
 			#se for o primeiro pacote
@@ -232,9 +218,6 @@ class ExampleSwitch13(app_manager.RyuApp):
 		dpid = datapath.id
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
-		self.logger.info('pkt ethernet %s',pkt_eth.src)
-		self.logger.info('pkt ipv4: %s, %s', pkt_ipv4.src, pkt_ipv4.proto)
-		self.logger.info('dst: %s', pkt_ipv4.dst)
 		if pkt_ipv4.dst == self.ip_switches[dpid]['ip']:
 
 			#Sout_port = in_port
@@ -242,7 +225,7 @@ class ExampleSwitch13(app_manager.RyuApp):
 
 			pkt = packet.Packet()
 			
-			pkt.add_protocol(ethernet.ethernet(ethertype=pkt_eth.ethertype,dst=pkt_eth.src,src=self.hw_addr))
+			pkt.add_protocol(ethernet.ethernet(ethertype=pkt_eth.ethertype,dst=pkt_eth.src,src=self.mac_switches[dpid]['mac']))
 
 			pkt.add_protocol(ipv4.ipv4(dst=pkt_ipv4.src,src=self.ip_switches[dpid]['ip'],proto=pkt_ipv4.proto, option=None))
 
