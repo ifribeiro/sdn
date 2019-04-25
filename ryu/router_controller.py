@@ -127,7 +127,7 @@ class RouterController(app_manager.RyuApp):
 			return		
 		pkt_arp = pkt.get_protocol(arp.arp)
 		if pkt_arp:
-			self.logger.info("Dpid s%s, %s", dpid, in_port)
+			
 			self._handle_arp(msg, datapath, in_port, eth_pkt, pkt_arp)
 			return
 	"""
@@ -168,7 +168,7 @@ class RouterController(app_manager.RyuApp):
 			if self.same_subnet(pkt_dst_ip, self.ip_switches[dpid]['ip']):
 				#FAZER BROADCAST SOMENTE NOS HOSTS
 				self.logger.info('Fazer broadcast')
-				self.
+				
 
 			else:
 				#retorna um arp_reply				
@@ -198,11 +198,16 @@ class RouterController(app_manager.RyuApp):
 			match = parser.OFPMatch(in_port=port, eth_type=ether_types.ETH_TYPE_IP, ipv4_dst = pkt_ipv4.dst)
 			self.add_flow(datapath, 2, match, actions)	
 			self._send_packet(datapath,port,pkt)
-		else:
-			self.logger.info('router: %s, dst: %s', self.ip_switches[dpid]['ip'],pkt_ipv4.dst )
+		else:			
 			if self.same_subnet(pkt_ipv4.dst, self.ip_switches[dpid]['ip']):
-				self.logger.info('Same subnet %s', dpid)
+				self.logger.info('pkt src: %s, dst: %s', pkt_ipv4.src, pkt_ipv4.dst)
 				#PEGAR PORTAS PARA HOSTS DO SWITCH
+				broadcast_ports = list(set(self.all_ports_s2) - set(self.ip_switches[dpid]['ports']))
+				self.logger.info('Fazer broadcast %s', broadcast_ports)
+				for out_port in broadcast_ports:
+					if out_port != port:
+						self.foward_packet(datapath, out_port, pkt_orig, pkt_ipv4)
+				
 			else:
 				self.logger.info('Other subnet %s', dpid)				
 				#PEGAR PORTAS PARA SWITCHES
