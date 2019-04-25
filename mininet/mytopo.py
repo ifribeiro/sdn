@@ -57,7 +57,7 @@ def myNetwork():
     s2.cmd('ifconfig s2 172.16.10.1/24')
     s3.cmd('ifconfig s3 192.168.30.10/24')
     
-    net.pingAll(1)
+    
     CLI(net)
     net.stop()
 

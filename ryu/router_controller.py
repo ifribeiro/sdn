@@ -41,9 +41,9 @@ class RouterController(app_manager.RyuApp):
 		self.netmask = '255.255.255.0'
 		self.arp_table = {}
 		self.mac_switches = {}
-		self.ports_hosts_s1 = []
-		self.ports_hosts_s2 = []
-		self.ports_hosts_s3 = []
+		self.links_to_s1 = []
+		self.links_to_s2 = []
+		self.links_to_s3 = []
 		self.ip_switches = {}
 		self.all_ports_s1 = []
 		self.all_ports_s2 = []
@@ -55,7 +55,8 @@ class RouterController(app_manager.RyuApp):
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
 		msg = ev.msg
-		# install the table-miss flow entry.
+	
+		#verifica o numero de portas
 		self.send_port_stats_request(datapath)
 		match = parser.OFPMatch()
 		actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
@@ -71,12 +72,14 @@ class RouterController(app_manager.RyuApp):
 		datapath.send_msg(mod) 
 
 	@set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
-	def _packet_in_handler(self, ev):		
+	def _packet_in_handler(self, ev):
+		
 		msg = ev.msg
 		#body = ev.msg.body
 		in_port = msg.match['in_port']		
 		datapath = msg.datapath		
 		dpid = datapath.id
+		self.send_arp_pkt(datapath, in_port)
 		self.ip_switches.setdefault(dpid, {})
 		self.mac_switches.setdefault(dpid,{})
 		try:
@@ -101,8 +104,7 @@ class RouterController(app_manager.RyuApp):
 		pkt_ipv4 = pkt.get_protocol(ipv4.ipv4)
 		
 		#define o valor padrao para o dicionario
-		if not eth_pkt:
-			
+		if not eth_pkt:				
 			return
 		if pkt_icmp:
 
@@ -113,7 +115,8 @@ class RouterController(app_manager.RyuApp):
 			
 			return		
 		pkt_arp = pkt.get_protocol(arp.arp)
-		if pkt_arp:			
+		if pkt_arp:
+			"""			
 			if(dpid==1):
 				if in_port not in self.ports_hosts_s1:
 					self.ports_hosts_s1.append(in_port)
@@ -122,7 +125,7 @@ class RouterController(app_manager.RyuApp):
 					self.ports_hosts_s2.append(in_port)
 			else:
 				if in_port not in self.ports_hosts_s3:
-					self.ports_hosts_s3.append(in_port)
+					self.ports_hosts_s3.append(in_port)"""
 
 			self._handle_arp(msg, datapath, in_port, eth_pkt, pkt_arp)
 			return
@@ -130,11 +133,26 @@ class RouterController(app_manager.RyuApp):
 	Processa os pacotes arp
 	"""
 	def _handle_arp(self, msg, datapath, in_port, eth_pkt, pkt_arp):
+
+		if(pkt_arp.opcode == arp.ARP_REPLY):
+			
+			if(datapath.id==1):
+				if in_port not in self.links_to_s1:
+					self.links_to_s1.append(in_port)
+			elif(datapath.id==2):
+				if in_port not in self.links_to_s2:
+					self.links_to_s2.append(in_port)
+			else:
+				if in_port not in self.links_to_s3:
+					self.links_to_s3.append(in_port)
+			self.logger.info('s1: %s', self.links_to_s1)
+			self.logger.info('s2: %s', self.links_to_s2)
+			self.logger.info('s3: %s', self.links_to_s3)
+			return 
 		pkt_src_ip = pkt_arp.src_ip
 		pkt_dst_ip = pkt_arp.dst_ip
 		ofproto = datapath.ofproto
-		parser = datapath.ofproto_parser
-
+		parser = datapath.ofproto_parser		
 		dpid = datapath.id
 		self.mac_to_port.setdefault(dpid, {})
 		self.arp_table.setdefault(dpid, {})
@@ -166,50 +184,6 @@ class RouterController(app_manager.RyuApp):
 				self._send_packet_v2(datapath, in_port, pkt, eth_pkt)
 
 				#encaminha o pacote icmp_request para outro switch
-
-		"""
-			#se for o primeiro pacote
-			if in_port not in self.arp_table[dpid]:
-				self.arp_table[dpid][pkt_src_ip] = in_port			
-				
-			#self.logger.info('Arp table: %s', self.arp_table)
-			if pkt_arp.opcode == arp.ARP_REPLY:
-				#self.logger.info('ARP REPLY src: %s dst: %s', pkt_src_ip, pkt_dst_ip)
-
-				if pkt_dst_ip in self.arp_table[dpid]:
-					out_port = self.arp_table[dpid][pkt_dst_ip]		
-			
-
-			#aprende o endereco mac para evitar o FLOOD da proxima vez
-			self.mac_to_port[dpid][src] = in_port
-					
-			#se o endereco de mac destino ja foi aprendido
-			#decide para qual porta de saida enviar o pacote, de outra forma realiza FLOOD
-						
-			#self.logger.info('pkt_dst_ip: %s', pkt_dst_ip)
-			if pkt_dst_ip in self.arp_table[dpid]:
-				out_port = self.arp_table[dpid][pkt_dst_ip]
-			else:
-				#self.logger.info('Enviar todas as portas')
-				out_port = ofproto.OFPP_ALL
-
-			actions = [parser.OFPActionOutput (out_port)]
-
-			if out_port != ofproto.OFPP_ALL:
-				#self.logger.info('Match in_port: %s - %s', in_port, pkt_dst_ip)
-				if pkt_arp.opcode == arp.ARP_REPLY:
-					match = parser.OFPMatch(in_port=out_port, eth_dst=dst)
-				else:
-					match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
-				self.add_flow(datapath, 1, match, actions)
-				
-			out = parser.OFPPacketOut(datapath=datapath, 
-									buffer_id=ofproto.OFP_NO_BUFFER,
-									in_port=in_port, 
-									actions=actions,
-									data=msg.data)		
-			
-			datapath.send_msg(out)"""
 		
 	def _handle_icmp(self, datapath, port, pkt_eth, pkt_ipv4, pkt_icmp, pkt_orig):
 		dst = pkt_eth.dst
@@ -218,41 +192,24 @@ class RouterController(app_manager.RyuApp):
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
 		if pkt_ipv4.dst == self.ip_switches[dpid]['ip']:
-		
+			#corrigir porta de saída
 			actions = [parser.OFPActionOutput (port=ofproto.OFPP_CONTROLLER)]
 			pkt = packet.Packet()			
 			pkt.add_protocol(ethernet.ethernet(ethertype=pkt_eth.ethertype,dst=pkt_eth.src,src=self.mac_switches[dpid]['mac']))
 			pkt.add_protocol(ipv4.ipv4(dst=pkt_ipv4.src,src=self.ip_switches[dpid]['ip'],proto=pkt_ipv4.proto, option=None))
-			pkt.add_protocol(icmp.icmp(type_=icmp.ICMP_ECHO_REPLY,code=icmp.ICMP_ECHO_REPLY_CODE,csum=0,data=pkt_icmp.data))	
+			pkt.add_protocol(icmp.icmp(type_=icmp.ICMP_ECHO_REPLY,code=icmp.ICMP_ECHO_REPLY_CODE,csum=0,data=pkt_icmp.data))
 			match = parser.OFPMatch(in_port=port, eth_type=ether_types.ETH_TYPE_IP, ipv4_dst = pkt_ipv4.dst)
 			self.add_flow(datapath, 2, match, actions)	
 			self._send_packet(datapath,port,pkt)
-		
-		"""
-		if pkt_ipv4.dst in self.arp_table[dpid]:			
-			porta_saida = self.arp_table[dpid][pkt_ipv4.dst]
-			
-		if pkt_icmp.type != icmp.ICMP_ECHO_REQUEST:
-			self.logger.info('ICMP echo reply')
-			return
-		
-		
-		pkt = packet.Packet()
-		pkt.add_protocol(ethernet.ethernet(ethertype=pkt_eth.ethertype, dst=pkt_eth.dst, src=pkt_eth.src))
-		pkt.add_protocol(ipv4.ipv4(dst=pkt_ipv4.dst, src=pkt_ipv4.dst, proto=pkt_ipv4.proto))
-		pkt.add_protocol(icmp.icmp(type_=icmp.ICMP_ECHO_REPLY, code=icmp.ICMP_ECHO_REPLY_CODE, csum=0, data=pkt_icmp.data))
-		actions = [parser.OFPActionOutput (porta_saida)]
-		match = parser.OFPMatch(in_port=porta_saida, eth_dst=dst)
-		self.add_flow(datapath, 1, match, actions)
-
-		data = pkt_orig.data
-		out = parser.OFPPacketOut(datapath=datapath, 
-									buffer_id=ofproto.OFP_NO_BUFFER,
-									in_port=porta_saida, 
-									actions=actions,
-									data=data)
-		
-		datapath.send_msg(out)"""
+		else:
+			#self.logger.info('icmpreq src: %s, dst: %s', pkt_ipv4.src, pkt_ipv4.dst)
+			self.logger.info('icmp: %s', pkt_icmp)
+			pkt = packet.Packet()
+			pkt.add_protocol(ethernet.ethernet(ethertype=pkt_eth.ethertype, dst=pkt_eth.dst,src=pkt_eth.src))
+			pkt.add_protocol(ipv4.ipv4(dst=pkt_ipv4.dst, src=pkt_ipv4.src, proto=pkt_ipv4.proto, option=None))
+			pkt.add_protocol(icmp.icmp(type_=icmp.ICMP_ECHO_REQUEST,code=icmp.ICMP_ECHO_REQUEST,csum=0,data=pkt_icmp.data))
+			port = 1
+			#self._send_packet(datapath, port, pkt)
 
 	def _send_packet(self, datapath, port, pkt):
 		ofproto = datapath.ofproto
@@ -315,7 +272,7 @@ class RouterController(app_manager.RyuApp):
 		bw_dst = int(bin_dst_ip) & int(bin_nm_ip)
 		return bw_dst==bw_src
 
-
+	"""Converte o endereco ip para binario"""
 	def dec_to_bin(self,ip):
 		ip_array = list(filter(None, ip.split('.')))
 		if len(ip_array) != 4:
@@ -323,3 +280,21 @@ class RouterController(app_manager.RyuApp):
 		else:
 			ip_bin = ['{0:08b}'.format(int(el)) for el in ip_array]
 		return ''.join(ip_bin)
+	
+	def send_arp_pkt(self,datapath, in_port):
+		self.logger.info('Enviou send arp')		
+		pkt = packet.Packet()
+		pkt.add_protocol(ethernet.ethernet(ethertype=ether_types.ETH_TYPE_ARP, dst='00:00:00:00:00:00', src='00:00:00:00:00:00'))
+		pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, src_mac='00:00:00:00:00:00', src_ip='0.0.0.0', dst_mac='00:00:00:00:00:00', dst_ip='0.0.0.0'))
+		#self._send_packet_v2(datapath, port, pkt, eth_pkt)
+		ofproto = datapath.ofproto
+		parser = datapath.ofproto_parser		
+		pkt.serialize()
+		data = pkt.data
+		actions = [parser.OFPActionOutput (port=ofproto.OFPP_FLOOD)]
+		out = parser.OFPPacketOut(datapath=datapath, 
+									buffer_id=ofproto.OFP_NO_BUFFER,
+									in_port=in_port, 
+									actions=actions,
+									data=data)
+		datapath.send_msg(out)
