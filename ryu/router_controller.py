@@ -155,6 +155,11 @@ class RouterController(app_manager.RyuApp):
 				
 			self.logger.info('routing table: %s', self.routing_table)
 			return
+		
+		self.arp_table[pkt_arp.src_ip]['mac'] = pkt_arp.src_mac
+		self.routing_table.setdefault(dpid, {})
+		self.routing_table[dpid][pkt_arp.src_ip] = in_port
+
 		self.logger.info('Portas: %s, %s', dpid, self.ip_switches[dpid]['ports'])
 		pkt_src_ip = pkt_arp.src_ip
 		pkt_dst_ip = pkt_arp.dst_ip
@@ -192,7 +197,7 @@ class RouterController(app_manager.RyuApp):
 				if(pkt_arp.opcode!=arp.ARP_REPLY):
 					self._send_packet_v2(datapath, in_port, pkt, eth_pkt)
 
-				#encaminha o pacote icmp_request para outro switch
+				
 		
 	def _handle_icmp(self, datapath, port, pkt_eth, pkt_ipv4, pkt_icmp, pkt_orig, msg):
 		dst = pkt_eth.dst
@@ -201,9 +206,9 @@ class RouterController(app_manager.RyuApp):
 		ofproto = datapath.ofproto
 		parser = datapath.ofproto_parser
 
-		if pkt_ipv4.proto == 1:
+		if pkt_icmp.code == icmp.ICMP_ECHO_REPLY:
 			self.logger.info('ICMP reply')
-			return 
+			self.logger.info('src: %s, dst: %s', pkt_ipv4.src, pkt_ipv4.dst )
 
 
 		if pkt_ipv4.dst == self.ip_switches[dpid]['ip']:
@@ -221,9 +226,7 @@ class RouterController(app_manager.RyuApp):
 			if self.same_subnet(pkt_ipv4.dst, self.ip_switches[dpid]['ip']):
 				
 				#PEGAR PORTAS PARA HOSTS DO SWITCH
-				broadcast_ports = list(set(self.all_ports_s2) - set(self.ip_switches[dpid]['ports']))
-				
-				
+				broadcast_ports = list(set(self.all_ports_s2) - set(self.ip_switches[dpid]['ports']))			
 				if pkt_ipv4.dst in self.arp_table:
 					
 					mac_dest = self.arp_table[pkt_ipv4.dst]['mac']					
