@@ -24,8 +24,8 @@ def myNetwork():
                       port=6633)
 
     info( '*** Add switches\n')
-    s2 = net.addSwitch('s2', cls=OVSKernelSwitch)
     s3 = net.addSwitch('s3', cls=OVSKernelSwitch)
+    s2 = net.addSwitch('s2', cls=OVSKernelSwitch)    
     s1 = net.addSwitch('s1', cls=OVSKernelSwitch)
 
     info( '*** Add hosts\n')
@@ -55,7 +55,7 @@ def myNetwork():
     info( '*** Post configure switches and hosts\n')
     s1.cmd('ifconfig s1 172.16.20.1/24')
     s2.cmd('ifconfig s2 172.16.10.1/24')
-    s3.cmd('ifconfig s3 192.168.30.10/24')
+    s3.cmd('ifconfig s3 192.168.30.1/24')
     
     
     CLI(net)
