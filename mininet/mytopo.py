@@ -29,9 +29,9 @@ def myNetwork():
     s1 = net.addSwitch('s1', cls=OVSKernelSwitch)
 
     info( '*** Add hosts\n')
-    h1 = net.addHost('h1', cls=Host, ip='172.16.20.10/24', defaultRoute='h1-eth0', mac='00:00:00:00:00:01')
-    h2 = net.addHost('h2', cls=Host, ip='172.16.10.10/24', defaultRoute='h2-eth0', mac='00:00:00:00:00:02')
-    h3 = net.addHost('h3', cls=Host, ip='192.168.30.10/24', defaultRoute='h3-eth0', mac='00:00:00:00:00:03')
+    h1 = net.addHost('h1', cls=Host, ip='172.16.20.10/24', defaultRoute='h1-eth0')
+    h2 = net.addHost('h2', cls=Host, ip='172.16.10.10/24', defaultRoute='h2-eth0')
+    h3 = net.addHost('h3', cls=Host, ip='192.168.30.10/24', defaultRoute='h3-eth0')
 
     info( '*** Add links\n')
     net.addLink(s2, s3)
