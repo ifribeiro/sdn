@@ -23,6 +23,7 @@ from ryu.lib.packet import ethernet
 from ryu.lib.packet import icmp
 from ryu.lib.packet import ipv4
 from ryu.lib.packet import arp
+from ryu.lib.packet import vlan
 from ryu.lib.packet import ether_types
 import os
 import string
@@ -72,7 +73,7 @@ class RouterController(app_manager.RyuApp):
 		in_port = msg.match['in_port']		
 		datapath = msg.datapath		
 		dpid = datapath.id		
-		
+		self.logger.info('Packet in S%s inport: %s', dpid, in_port)
 		self.ip_switches.setdefault(dpid, {})
 		self.mac_switches.setdefault(dpid,{})
 		
@@ -88,21 +89,24 @@ class RouterController(app_manager.RyuApp):
 				self.ip_switches[dpid]['ip'] = ip_router
 			if mac_router not in self.mac_switches:
 				self.mac_switches[dpid]['mac'] = mac_router
+			self.logger.info('ip_switches %s',self.ip_switches[dpid]['ip'])
 		except:
+			self.logger.info('Nao ta passando daqui')
 			return
 		
 		#analisa o pacote recebido usando a biblioteca de pacotes
 		pkt = packet.Packet(msg.data)
 		eth_pkt = pkt.get_protocol(ethernet.ethernet)
 		pkt_icmp = pkt.get_protocol(icmp.icmp)
+		pkt_vlan = pkt.get_protocol(vlan.vlan)
 		
-		
+		self.logger.info("Pkt %s",pkt)
 		#define o valor padrao para o dicionario
 		if not eth_pkt:
-				
+			self.logger.info("Pkt eth_pkt")
 			return
 		if eth_pkt:		
-
+			self.logger.info("Pkt eth_pkt")
 			if (eth_pkt.dst == '00:00:00:00:00:00') and (eth_pkt.src=='00:00:00:00:00:00'):
 				if 'ports' in self.ip_switches[dpid]:
 					if in_port not in self.ip_switches[dpid]['ports']:
@@ -113,23 +117,29 @@ class RouterController(app_manager.RyuApp):
 
 		pkt_ipv4 = pkt.get_protocol(ipv4.ipv4)
 		if pkt_icmp:
+			self.logger.info('Pkt icmp')
 
 			self._handle_icmp(datapath, in_port, eth_pkt, pkt_ipv4, pkt_icmp, pkt,msg)
 			return
 
 		if pkt_ipv4:
-			
+			self.logger.info('Ipv4 pkt')		
 						
 			return		
 		pkt_arp = pkt.get_protocol(arp.arp)
 		if pkt_arp:
-			
+			self.logger.info("Arp packet")			
 			self._handle_arp(msg, datapath, in_port, eth_pkt, pkt_arp)
+			return
+		if pkt_vlan:
+			self.logger.info('Pkt vlan')
 			return
 	"""
 	Processa os pacotes arp
 	"""
 	def _handle_arp(self, msg, datapath, in_port, eth_pkt, pkt_arp):
+		self.logger.info('Pkt %s',pkt_arp)
+		
 		dpid = datapath.id
 		self.mac_table.setdefault(pkt_arp.src_ip,{})
 		if(pkt_arp.opcode == arp.ARP_REPLY):			
@@ -197,6 +207,7 @@ class RouterController(app_manager.RyuApp):
 	Processa os pacotes ICMP
 	"""	
 	def _handle_icmp(self, datapath, port, pkt_eth, pkt_ipv4, pkt_icmp, pkt_orig, msg):
+		self.logger.info('pkt %s', pkt_ipv4)
 		dst = pkt_eth.dst
 		src = pkt_eth.dst
 		dpid = datapath.id
@@ -457,12 +468,14 @@ class RouterController(app_manager.RyuApp):
 				self.portas_switches[dpid]['allports'] = []
 				(self.portas_switches[dpid]['allports']).append(port)
 			self.send_arp_pkt(datapath, 0)
+		self.logger.info('allportas %s',self.portas_switches[dpid]['allports'])
 	
 	def same_subnet(self, pkt_dst_ip, router_ip):
 		ip_rede = router_ip+"/24"
 		return IPAddress(pkt_dst_ip) in IPNetwork(ip_rede)
 
-	def send_arp_pkt(self,datapath, in_port):	
+	def send_arp_pkt(self,datapath, in_port):
+		self.logger.info('Sending arp')
 		
 		pkt = packet.Packet()
 		pkt.add_protocol(ethernet.ethernet(ethertype=ether_types.ETH_TYPE_ARP, dst='00:00:00:00:00:00', src='00:00:00:00:00:00'))		
