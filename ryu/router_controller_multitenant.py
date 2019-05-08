@@ -91,7 +91,6 @@ class RouterController(app_manager.RyuApp):
 				self.mac_switches[dpid]['mac'] = mac_router
 			self.logger.info('ip_switches %s',self.ip_switches[dpid]['ip'])
 		except:
-			self.logger.info('Nao ta passando daqui')
 			return
 		
 		#analisa o pacote recebido usando a biblioteca de pacotes
