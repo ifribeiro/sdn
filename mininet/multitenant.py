@@ -29,12 +29,12 @@ def myNetwork():
     s3 = net.addSwitch('s3', cls=OVSKernelSwitch)
 
     info( '*** Add hosts\n')
-    h1s2 = net.addHost('h1s2', cls=Host, ip='192.168.30.10/24', defaultRoute='h1s2-eth0')
-    h2s1 = net.addHost('h2s1', cls=Host, ip='172.16.10.11/24', defaultRoute='h2s1-eth0')
-    h1s3 = net.addHost('h1s3', cls=Host, ip='172.16.20.10/24', defaultRoute='h1s3-eth0')
-    h1s1 = net.addHost('h1s1', cls=Host, ip='172.16.10.10/24', defaultRoute='h1s1-eth0')
-    h2s2 = net.addHost('h2s2', cls=Host, ip='192.168.30.11/24', defaultRoute='h2s2-eth0')
-    h2s3 = net.addHost('h2s3', cls=Host, ip='172.16.20.11/24', defaultRoute='h2s3-eth0')
+    h1s2 = net.addHost('h1s2', cls=Host, ip='192.168.30.10/24', defaultRoute='via 192.168.30.1')
+    h2s1 = net.addHost('h2s1', cls=Host, ip='172.16.10.11/24', defaultRoute='via 172.16.10.1')
+    h1s3 = net.addHost('h1s3', cls=Host, ip='172.16.20.10/24', defaultRoute='via 172.16.20.1')
+    h1s1 = net.addHost('h1s1', cls=Host, ip='172.16.10.10/24', defaultRoute='via 172.16.10.1')
+    h2s2 = net.addHost('h2s2', cls=Host, ip='192.168.30.11/24', defaultRoute='via 192.168.30.1')
+    h2s3 = net.addHost('h2s3', cls=Host, ip='172.16.20.11/24', defaultRoute='via 172.16.20.1')
 
     info( '*** Add links\n')
     net.addLink(s1, s2)

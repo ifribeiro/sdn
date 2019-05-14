@@ -40,9 +40,9 @@ class RouterController(app_manager.RyuApp):
 		#inicializa a tabela arp	
 		self.mac_table = {}
 		self.routing_table = {}
-		self.mac_switches = {}
-		self.ip_switches = {}
+		self.mac_switches = {1:{'mac':'0a:0a:0a:0a:0a:0a'}, 2:{'mac':'0b:0b:0b:0b:0b:0b'}}
 		self.portas_switches = {}
+		self.ip_switches = {1:{'ip':'172.16.10.50'}, 2:{'ip':'172.16.20.50'}}
 
 	@set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
 	def switch_features_handler(self, ev):
@@ -76,36 +76,37 @@ class RouterController(app_manager.RyuApp):
 		self.logger.info('Packet in S%s inport: %s', dpid, in_port)
 		self.ip_switches.setdefault(dpid, {})
 		self.mac_switches.setdefault(dpid,{})
-		
+
+		#self.logger.info("ip switches %s", self.ip_switches[dpid]['ip'])
+		"""
 		try:
-			cmd_ip = "ip -4 addr show s"+ str(datapath.id) + "| grep -oP '(?<=inet\s)\d+(\.\d+){3}'"
-			cmd_mac = "ip -4 link show s"+ str(datapath.id) + "| awk '/ether/ {print $2}'" 
+			#cmd_ip = "ip -4 addr show s"+ str(datapath.id) + "| grep -oP '(?<=inet\s)\d+(\.\d+){3}'"
+			#cmd_mac = "ip -4 link show s"+ str(datapath.id) + "| awk '/ether/ {print $2}'" 
 			res_ip = os.popen(cmd_ip).readlines()
 			res_mac = os.popen(cmd_mac).readlines()
 			ip_router = res_ip[0].rstrip()
 			mac_router = res_mac[0].rstrip()
 
 			if ip_router not in self.ip_switches[dpid]:
+				self.logger.info("Not in ip_router")
 				self.ip_switches[dpid]['ip'] = ip_router
 			if mac_router not in self.mac_switches:
 				self.mac_switches[dpid]['mac'] = mac_router
 			self.logger.info('ip_switches %s',self.ip_switches[dpid]['ip'])
 		except:
+			self.logger.info('Nao entrou no try')
 			return
-		
+		"""
 		#analisa o pacote recebido usando a biblioteca de pacotes
 		pkt = packet.Packet(msg.data)
 		eth_pkt = pkt.get_protocol(ethernet.ethernet)
 		pkt_icmp = pkt.get_protocol(icmp.icmp)
 		pkt_vlan = pkt.get_protocol(vlan.vlan)
 		
-		self.logger.info("Pkt %s",pkt)
 		#define o valor padrao para o dicionario
 		if not eth_pkt:
-			self.logger.info("Pkt eth_pkt")
 			return
-		if eth_pkt:		
-			self.logger.info("Pkt eth_pkt")
+		if eth_pkt:
 			if (eth_pkt.dst == '00:00:00:00:00:00') and (eth_pkt.src=='00:00:00:00:00:00'):
 				if 'ports' in self.ip_switches[dpid]:
 					if in_port not in self.ip_switches[dpid]['ports']:
@@ -127,17 +128,16 @@ class RouterController(app_manager.RyuApp):
 			return		
 		pkt_arp = pkt.get_protocol(arp.arp)
 		if pkt_arp:
-			self.logger.info("Arp packet")			
-			self._handle_arp(msg, datapath, in_port, eth_pkt, pkt_arp)
+			self._handle_arp(msg, datapath, in_port, eth_pkt, pkt_arp, pkt_vlan)
 			return
 		if pkt_vlan:
-			self.logger.info('Pkt vlan')
+			self.logger.info('Pkt vlan %s', pkt_vlan)
+
 			return
 	"""
 	Processa os pacotes arp
 	"""
-	def _handle_arp(self, msg, datapath, in_port, eth_pkt, pkt_arp):
-		self.logger.info('Pkt %s',pkt_arp)
+	def _handle_arp(self, msg, datapath, in_port, eth_pkt, pkt_arp, pkt_vlan):
 		
 		dpid = datapath.id
 		self.mac_table.setdefault(pkt_arp.src_ip,{})
@@ -158,7 +158,7 @@ class RouterController(app_manager.RyuApp):
 		parser = datapath.ofproto_parser		
 		dst = eth_pkt.dst
 		src = eth_pkt.src
-
+		self.logger.info('Chegou ate aqui')
 		#Se o arp request for endereçado ao switch
 		if pkt_dst_ip == self.ip_switches[dpid]['ip']:						
 			pkt = packet.Packet()
@@ -172,34 +172,36 @@ class RouterController(app_manager.RyuApp):
 	
 		else:
 			#se estiver na mesma sub rede, fazer broadcast
-			if self.same_subnet(pkt_dst_ip, pkt_src_ip):					
-				self.logger.info("")
-			#se não estiver na mesma subrede responde com os dados do switch
-			else:		
-				pkt = packet.Packet()
-				pkt.add_protocol(ethernet.ethernet(ethertype=eth_pkt.ethertype, 
-								dst=eth_pkt.src, src=self.mac_switches[dpid]['mac']))
+			self.logger.info('Pkt arp src: %s', pkt_arp.dst_mac)
+			pkt = packet.Packet()
+			pkt.add_protocol(ethernet.ethernet(ethertype=eth_pkt.ethertype, 
+							dst=eth_pkt.src, src=self.mac_switches[dpid]['mac']))
+			
+			pkt.add_protocol(vlan.vlan(pcp=pkt_vlan.pcp, 
+							cfi=pkt_vlan.cfi,vid=pkt_vlan.vid, 
+							ethertype=pkt_vlan.ethertype))
 
-				pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, 
-								src_mac=pkt_arp.dst_mac, 
-								src_ip=pkt_arp.dst_ip, 
-								dst_mac=pkt_arp.src_mac, 
-								dst_ip=pkt_arp.src_ip))
+			pkt.add_protocol(arp.arp(opcode=arp.ARP_REPLY, 
+							src_mac=pkt_arp.dst_mac, 
+							src_ip=pkt_arp.dst_ip, 
+							dst_mac=pkt_arp.src_mac, 
+							dst_ip=pkt_arp.src_ip))
 
-				match = parser.OFPMatch(eth_dst=eth_pkt.src)
-				actions = [parser.OFPActionOutput (port=in_port)]
-				self.add_flow(datapath, 2, match, actions)
+			match = parser.OFPMatch(eth_dst=eth_pkt.src)
+			actions = [parser.OFPActionOutput (port=in_port)]
+			self.add_flow(datapath, 2, match, actions)
 
-				if(pkt_arp.opcode!=arp.ARP_REPLY):
-					pkt.serialize()
-					data = pkt.data					
-					out = parser.OFPPacketOut(datapath=datapath, 
-												buffer_id=ofproto.OFP_NO_BUFFER,
-												in_port=ofproto.OFPP_CONTROLLER, 
-												actions=actions,
-												data=data)
-					
-					datapath.send_msg(out)
+			if(pkt_arp.opcode!=arp.ARP_REPLY):
+				self.logger.info('diferent arp reply %s', in_port )
+				pkt.serialize()
+				data = pkt.data					
+				out = parser.OFPPacketOut(datapath=datapath, 
+											buffer_id=ofproto.OFP_NO_BUFFER,
+											in_port=ofproto.OFPP_CONTROLLER, 
+											actions=actions,
+											data=data)
+				
+				datapath.send_msg(out)
 
 				
 	"""
